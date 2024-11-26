@@ -10,7 +10,7 @@ import Cocoa
 import SDWebImage
 import Sparkle
 
-@NSApplicationMain
+@main
 class AppDelegate: NSObject, NSApplicationDelegate {
 
 	let updaterController = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
@@ -63,6 +63,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Insert code here to tear down your application
     }
     
+    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
+        return true
+    }
+    
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag {
             for window in sender.windows {
@@ -74,6 +78,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
     
+	@MainActor
 	func showUpdateAlert() {
 		guard !Preferences.shared.updateInfo070 else { return }
 		Preferences.shared.updateInfo070 = true

@@ -8,12 +8,7 @@
 
 import Cocoa
 
-class IINAApp: NSObject {
-	
-	let internalPluginVersion = "0.1.8"
-	let internalPluginBuild = 5
-	
-	let minIINABuild = 135
+actor IINAApp {
 	
 	enum PluginState {
 		case ok(String)
@@ -45,14 +40,27 @@ class IINAApp: NSObject {
 		}
 	}
 	
-	func buildVersion() -> Int {
+	static let internalPluginVersion = "0.1.12"
+	static let internalPluginBuild = 9
+	
+	static let minIINABuild = 135
+	
+	var buildVersion: Int = 0
+	var archiveType: IINAUrlType = .none
+	
+	func updateIINAState() {
+		buildVersion = IINAApp.getBuildVersion()
+		archiveType = IINAApp.getArchiveType()
+	}
+	
+	static func getBuildVersion() -> Int {
 		let b = Bundle(path: "/Applications/IINA.app")
 		let build = b?.infoDictionary?["CFBundleVersion"] as? String ?? ""
 		return Int(build) ?? 0
 	}
 	
-	func archiveType() -> IINAUrlType {
-		let build = buildVersion()
+	static func getArchiveType() -> IINAUrlType {
+		let build = getBuildVersion()
 		
 		let b = Bundle(path: "/Applications/IINA.app")
 		guard let version = b?.infoDictionary?["CFBundleShortVersionString"] as? String else {
@@ -63,12 +71,17 @@ class IINAApp: NSObject {
 		} else if version.contains("plugin") {
 			return .plugin
 		} else if build >= minIINABuild {
-			return .plugin
+			switch pluginState() {
+			case .isDev, .ok(_):
+				return .plugin
+			default:
+				break
+			}
 		}
 		return .normal
 	}
 	
-	func pluginState() -> PluginState {
+	static func pluginState() -> PluginState {
 		do {
 			let plugins = try listPlugins()
 			switch plugins.count {
@@ -97,7 +110,7 @@ class IINAApp: NSObject {
 		}
 	}
 	
-	func pluginFolder() throws -> String {
+	static func pluginFolder() throws -> String {
 //		/Users/xxx/Library/Application Support/com.colliderli.iina/plugins
 		let fm = FileManager.default
 		let url = try fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
@@ -109,7 +122,7 @@ class IINAApp: NSObject {
 		return path
 	}
 	
-	func listPlugins() throws -> [PluginInfo] {
+	static func listPlugins() throws -> [PluginInfo] {
 		let fm = FileManager.default
 		let path = try pluginFolder()
 		return try fm.contentsOfDirectory(atPath: path).filter {
@@ -128,7 +141,7 @@ class IINAApp: NSObject {
 		}
 	}
 	
-	func uninstallPlugins(_ plugins: [PluginInfo]) {
+	static func uninstallPlugins(_ plugins: [PluginInfo]) {
 		plugins.filter {
 			!$0.isDev
 		}.forEach {
@@ -136,7 +149,7 @@ class IINAApp: NSObject {
 		}
 	}
 	
-	func installPlugin() throws {
+	static func installPlugin() throws {
 		guard let path = Bundle.main.path(forResource: "iina-plugin-danmaku", ofType: "iinaplgz"),
 			  FileManager.default.fileExists(atPath: path) else {
 			throw IINAError.missingPluginFile

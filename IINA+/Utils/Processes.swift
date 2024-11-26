@@ -8,31 +8,29 @@
 
 import Foundation
 import Marshal
-import PromiseKit
 import Cocoa
-
-class Processes: NSObject {
+ 
+@MainActor
+final class Processes: NSObject, Sendable {
     
+	enum ProcessesError: Error {
+		case openFailed(String)
+		case urlNotFound
+		case notSupported
+	}
+	
     static let shared = Processes()
     let videoDecoder = VideoDecoder()
+    let iina = IINAApp()
+    
+    
     let httpServer = HttpServer()
-	let iina = IINAApp()
     
-    var decodeTask: Process?
-    var videoGetTasks: [(Promise<YouGetJSON>, cancel: () -> Void)] = []
-    
+	private var decodeTask: Task<YouGetJSON, any Error>?
+	
     fileprivate override init() {
+        
     }
-    
-    var urlQueryValueAllowed: CharacterSet = {
-        let generalDelimitersToEncode = ":#[]@?/" // does not include "?" or "/" due to RFC 3986 - Section 3.4
-        let subDelimitersToEncode = "!$&'()*+,;="
-        
-        var allowed = CharacterSet.urlQueryAllowed
-        allowed.remove(charactersIn: generalDelimitersToEncode + subDelimitersToEncode)
-        
-        return allowed
-    }()
     
     func which(_ str: String) -> [String] {
         // which you-get
@@ -83,21 +81,15 @@ class Processes: NSObject {
 		return str.subString(from: "mpv", to: "Copyright").replacingOccurrences(of: " ", with: "")
     }
     
-	
-    func decodeURL(_ url: String) -> Promise<YouGetJSON> {
-        return Promise { resolver in
-            videoGetTasks.append(decodeUrlWithVideoGet(url))
-            videoGetTasks.last?.0.done {
-                resolver.fulfill($0)
-                }.catch(policy: .allErrors) {
-                    switch $0 {
-                    case PMKError.cancelled:
-                        resolver.reject(PMKError.cancelled)
-                    default:
-                        resolver.reject($0)
-                    }
-            }
-        }
+    func decodeURL(_ url: String) async throws -> YouGetJSON {
+        decodeTask?.cancel()
+		
+		let task = Task {
+			try await videoDecoder.decodeUrl(url)
+		}
+		
+		decodeTask = task
+		return try await task.value
     }
     
     enum DecodeUrlError: Error {
@@ -107,101 +99,53 @@ class Processes: NSObject {
     }
     
     func stopDecodeURL() {
-        if let task = decodeTask, task.isRunning {
-            decodeTask?.suspend()
-            decodeTask?.terminate()
-            decodeTask = nil
-        }
-        
-        videoGetTasks.removeAll {
-            $0.0.isFulfilled || $0.0.isRejected
-        }
-        videoGetTasks.last?.cancel()
+		decodeTask?.cancel()
     }
     
-    func decodeUrlWithVideoGet(_ url: String) -> (Promise<YouGetJSON>, cancel: () -> Void) {
-        var cancelme = false
+	func openWithPlayer(_ json: YouGetJSON, _ key: String) async throws {
+		await iina.updateIINAState()
+		let type = await iina.archiveType
+		let buildVersion = await iina.buildVersion
         
-        let promise = Promise<YouGetJSON> { resolver in
-            self.videoDecoder.decodeUrl(url).done {
-                guard !cancelme else { return resolver.reject(PMKError.cancelled) }
-                resolver.fulfill($0)
-                }.catch {
-                    guard !cancelme else { return resolver.reject(PMKError.cancelled) }
-                    resolver.reject($0)
-            }
-        }
-        
-        let cancel = {
-            cancelme = true
-        }
-        return (promise, cancel)
-    }
-    
-    func openWithPlayer(_ json: YouGetJSON, _ key: String) {
-        let task = Process()
-        let pipe = Pipe()
-        task.standardInput = pipe
-        
-		let type = iina.archiveType()
-		let buildVersion = iina.buildVersion()
-        
+		let urlScheme = json.iinaURLScheme(key, type: type)
 		
-        guard let u = json.videoUrl(key),
-              u != "",
-              let iinaUrl = json.iinaUrl(key, type: type) else {
-            Log("Not Found YouGetJSON Url.")
-            return
-        }
-        
         switch Preferences.shared.livePlayer {
         case .iina where type == .plugin:
-            openWithURLScheme(iinaUrl)
-        case .iina where type == .danmaku && buildVersion >= 15:
-//            IINA-Danmaku 1.1.2 NEW API
-            openWithURLScheme(iinaUrl)
-        case .iina where type == .danmaku && buildVersion < 15:
-            openWithProcess(u, args: json.mpvOptions, uuid: json.uuid)
+			// IINA Danmaku Plguin
+            try openWithURLScheme(urlScheme)
         case .iina where type == .normal && buildVersion >= 90:
-//            1.0.0 beta3 build 86  URL Scheme without mpv options
-//            1.0.0 beta4 build 90
-            if [.bilibili, .bangumi, .biliLive].contains(json.site) {
-                openWithProcess(u, args: json.mpvOptions, uuid: json.uuid)
-            } else {
-                openWithURLScheme(iinaUrl)
-            }
+			// IINA Official with URL Scheme + MPV Options
+            // 1.0.0 beta3 build 86  URL Scheme without mpv options
+            // 1.0.0 beta4 build 90
+			try openWithURLScheme(urlScheme)
+		case .iina where type == .danmaku && buildVersion >= 15:
+			// IINA-Danmaku 1.1.2 NEW API
+			try openWithURLScheme(urlScheme)
+		case .iina where type == .danmaku && buildVersion < 15:
+			// IINA-Danmaku cli
+			try await openWithProcess(json.videoUrl(key), args: json.mpvOptions, uuid: json.uuid)
         case .iina where type == .normal && buildVersion >= 56:
-//            iinc-cli build 56
-            openWithProcess(u, args: json.mpvOptions, uuid: json.uuid)
+			// IINA Official with cli
+			// iinc-cli build 56
+            try await openWithProcess(json.videoUrl(key, forDash: true), args: json.mpvOptions, uuid: json.uuid)
         case .mpv:
-            openWithProcess(u, args: json.mpvOptions, uuid: json.uuid)
+            try await openWithProcess(json.videoUrl(key), args: json.mpvOptions, uuid: json.uuid)
         default:
-            break
-        }
-        
-    }
-    
-    func openWithYtdl(_ url: String) {
-        // Use IINA's ytdl to open the raw url
-		let buildVersion = iina.buildVersion()
-        guard let v = url.addingPercentEncoding(withAllowedCharacters: urlQueryValueAllowed) else { return }
-        if buildVersion >= 90 {
-            let u = "iina://open?url=\(v)"
-            guard let uu = URL(string: u) else { return }
-            Log("Open IINA URL:  \(u)")
-            NSWorkspace.shared.open(uu)
-        } else if buildVersion >= 56 {
-            openWithProcess(url, args: [], uuid: "")
+			throw ProcessesError.notSupported
         }
     }
     
-    func openWithProcess(_ url: String, args: [String], uuid: String) {
+	private func openWithProcess(_ url: String?, args: [String], uuid: String) async throws {
+		guard let url, url != "" else {
+			throw ProcessesError.openFailed("Nil url")
+		}
+		
         let livePlayer = Preferences.shared.livePlayer
         let isIINA = livePlayer == .iina
         var args = args
 		
         if isIINA {
-			let type = iina.archiveType()
+			let type = await iina.archiveType
             args = args.map {
                 "--mpv-" + $0
             }
@@ -224,10 +168,8 @@ class Processes: NSObject {
 		let launchPath = isIINA ? livePlayer.rawValue : "\(self.which(livePlayer.rawValue).first ?? "")"
 		
 		guard launchPath != "" else {
-			Log("Not found launchPath")
-			return
+			throw ProcessesError.openFailed("Not found launchPath")
 		}
-		
 		
 		args.insert(launchPath, at: 0)
 		
@@ -237,10 +179,9 @@ class Processes: NSObject {
 		
     }
     
-    func openWithURLScheme(_ url: String) {
-        guard let u = URL(string: url) else {
-            Log("Invalid url scheme \(url).")
-            return
+    private func openWithURLScheme(_ url: String?) throws {
+        guard let url, url != "", let u = URL(string: url) else {
+			throw ProcessesError.openFailed("Invalid url scheme \(url ?? "nil url").")
         }
         Log("openWithURLScheme \(url).")
         NSWorkspace.shared.open(u)

@@ -13,11 +13,17 @@
 /* All */
 "LiveSite.All" = "All";
 
+/* Loading... */
+"Loading..." = "Loading...";
+
 /* No comment provided by engineer. */
 "mainMenu.view.reloadBilibiliList" = "Reload Bilibili List";
 
 /* No comment provided by engineer. */
 "mainMenu.view.reloadLiveStatus" = "Reload Live Status";
+
+/* plugin install finish */
+"PluginInstaller.tips" = "\nEverything OK  ✅\nRestart IINA to take effect";
 
 /* Quit anyway button title */
 "Quit anyway" = "Quit anyway";
@@ -70,8 +76,5 @@
 /* ಠ_ಠ  oops,  */
 "VideoGetError.oops" = "ಠ_ಠ  oops, ";
 
-/* KuaiShou */
-"SupportSites.KuaiShou" = "KuaiShou";
-
-/* plugin install finish */
-"PluginInstaller.tips" = "\nEverything OK  ✅\nRestart IINA to take effect";
+/* need login. */
+"VideoGetError.needLogin" = "need Login.";

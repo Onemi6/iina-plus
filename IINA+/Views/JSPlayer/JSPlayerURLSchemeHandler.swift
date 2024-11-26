@@ -11,15 +11,16 @@ import WebKit
 
 // https://github.com/snowhaze/SnowHaze-iOS/blob/master/SnowHaze/TorSchemeHandler.swift
 
+let JSPlayerSchemeName = "plusplayer"
+
 class JSPlayerURLSchemeHandler: NSObject, WKURLSchemeHandler {
 	
-	static let schemeName = "plusplayer"
 	
 	var map = [URLSessionDataTask: WKURLSchemeTask]()
 	var session: URLSession?
 	
 	func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
-		let schemeName = JSPlayerURLSchemeHandler.schemeName
+		let schemeName = JSPlayerSchemeName
 		
 		guard let url = urlSchemeTask.request.url?.absoluteString,
 			  url.hasPrefix(schemeName)
@@ -40,11 +41,14 @@ class JSPlayerURLSchemeHandler: NSObject, WKURLSchemeHandler {
 			request.setValue("https://live.bilibili.com", forHTTPHeaderField: "Origin")
 		case .qqLive:
 			request.setValue("libmpv", forHTTPHeaderField: "User-Agent")
+		case .huya:
+			request.setValue("https://www.huya.com/", forHTTPHeaderField: "Referer")
+			request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Safari/605.1.15", forHTTPHeaderField: "User-Agent")
 		default:
 			break
 		}
 		
-		session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+        session = URLSession(configuration: .default, delegate: self, delegateQueue: .main)
 		
 		if let dataTask = session?.dataTask(with: request) {
 			dataTask.resume()
@@ -59,55 +63,52 @@ class JSPlayerURLSchemeHandler: NSObject, WKURLSchemeHandler {
 		map[task] = nil
 		task.cancel()
 	}
+	
+	func stop() {
+		session?.invalidateAndCancel()
+		map.forEach {
+			$0.key.cancel()
+		}
+		map = [:]
+	}
 }
 
-extension JSPlayerURLSchemeHandler: URLSessionDelegate, URLSessionDataDelegate {
-	
-	func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
-		DispatchQueue.main.async { [weak self] in
-			guard let self = self else {
-				return
-			}
-			guard let schemeTask = self.map[dataTask] else {
-				dataTask.cancel()
-				return completionHandler(.cancel)
-			}
-			schemeTask.didReceive(response)
-			completionHandler(.allow)
-		}
-	}
-
-	func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-		DispatchQueue.main.async { [weak self] in
-			guard let self = self else {
-				return
-			}
-			guard let schemeTask = self.map[dataTask] else {
-				dataTask.cancel()
-				return
-			}
-			schemeTask.didReceive(data)
-		}
-	}
-	
-	
-	func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-		DispatchQueue.main.async { [weak self] in
-			guard let self = self else {
-				return
-			}
-			guard let dataTask = task as? URLSessionDataTask, let schemeTask = self.map[dataTask] else {
-				task.cancel()
-				return
-			}
-			self.map[dataTask] = nil
-			if let error = error {
-				schemeTask.didFailWithError(error)
-			} else {
-				schemeTask.didFinish()
-			}
-		}
-	}
-	
+extension JSPlayerURLSchemeHandler: URLSessionDelegate, @preconcurrency URLSessionDataDelegate {
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse) async -> URLSession.ResponseDisposition {
+        
+        guard let schemeTask = map[dataTask] else {
+            dataTask.cancel()
+            return .cancel
+        }
+        schemeTask.didReceive(response)
+        return .allow
+    }
+    
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        Task { @MainActor in
+            guard let schemeTask = self.map[dataTask] else {
+                dataTask.cancel()
+                return
+            }
+            schemeTask.didReceive(data)
+        }
+    }
+    
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        Task { @MainActor in
+            guard let dataTask = task as? URLSessionDataTask,
+                  let schemeTask = self.map[dataTask] else {
+                task.cancel()
+                return
+            }
+            self.map[dataTask] = nil
+            if let error = error {
+                schemeTask.didFailWithError(error)
+            } else {
+                schemeTask.didFinish()
+            }
+        }
+    }
+    
 }
 

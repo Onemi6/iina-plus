@@ -8,13 +8,14 @@
 
 import Cocoa
 
-class Preferences: NSObject {
+final class Preferences: NSObject, Sendable {
     static let shared = Preferences()
     
     private override init() {
     }
 
-    let prefs = UserDefaults.standard
+	nonisolated(unsafe) let prefs = UserDefaults.standard
+	
     let keys = PreferenceKeys.self
     
     var livePlayer: LivePlayer {
@@ -115,7 +116,7 @@ class Preferences: NSObject {
     
     @objc dynamic var dmPort: Int {
         get {
-			if Processes.shared.iina.buildVersion() > 16 {
+			if IINAApp.getBuildVersion() > 16 {
                 return defaults(.dmPort) as? Int ?? 19080
             } else {
                 return 19080
@@ -148,7 +149,7 @@ class Preferences: NSObject {
     
     @objc dynamic var stateReplay: NSColor {
         get {
-            return colorDecode(defaults(.stateReplay)) ?? .systemBlue
+            return colorDecode(defaults(.stateReplay)) ?? .controlAccentColor
         }
         set {
             defaultsSet(colorEncode(newValue), forKey: .stateReplay)
@@ -200,27 +201,6 @@ class Preferences: NSObject {
 		}
 	}
 	
-	var kuaiShouCookies: String {
-		get {
-			return defaults(.kuaiShouCookies) as? String ?? ""
-		}
-		set {
-			defaultsSet(newValue, forKey: .kuaiShouCookies)
-		}
-	}
-	
-	var kuaiShouCookiesDate: Date? {
-		get {
-			return defaults(.kuaiShouCookiesDate) as? Date
-		}
-		set {
-			if let v = newValue {
-				defaultsSet(v, forKey: .kuaiShouCookiesDate)
-			} else {
-				prefs.removeObject(forKey: PreferenceKeys.kuaiShouCookiesDate.rawValue)
-			}
-		}
-	}
 	
 	var customMpvPath: String {
 		get {
@@ -245,7 +225,7 @@ class Preferences: NSObject {
 private extension Preferences {
     
     func defaults(_ key: PreferenceKeys) -> Any? {
-        return prefs.value(forKey: key.rawValue) as Any?
+		prefs.value(forKey: key.rawValue) as Any?
     }
     
     func defaultsSet(_ value: Any, forKey key: PreferenceKeys) {
@@ -276,9 +256,6 @@ enum PreferenceKeys: String {
 	case bilibiliHTMLDecoder
     case bilibiliCodec
     case bililiveHevc
-	
-	case kuaiShouCookies
-	case kuaiShouCookiesDate
 	
 	case updateInfo070
 	
